@@ -76,6 +76,7 @@ static const GUID embed_guid =
 
 wchar_t configFileName[MAX_PATH];
 embedWindowState myWindowState = { 0 };
+HWND displayWnd = NULL;
 DWORD currentPid = -1;
 
 void runProcessInBackground(wchar_t* cmdLine)
@@ -105,6 +106,22 @@ void stopProcess()
 
 		currentPid = -1;
 	}
+}
+
+LRESULT CALLBACK visWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message) {
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+	case WM_WINDOWPOSCHANGED:
+	{
+		stopProcess();
+		render(NULL);
+	}
+	return 0;
+	}
+	return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
 // configuration dialog
@@ -143,6 +160,28 @@ int init(struct winampVisModule* this_mod)
 	HWND parent = embed(&myWindowState);
 	SetWindowText(myWindowState.me, L"SCREENSAVER VIS"); // set window title
 
+	// Register window class
+	WNDCLASS wc = { 0 };
+	wc.lpfnWndProc = visWndProc;
+	wc.hInstance = this_mod->hDllInstance;
+	wc.lpszClassName = L"visscrclass";
+
+	if (!RegisterClass(&wc)) {
+		MessageBox(this_mod->hwndParent, L"Error registering class, this is serious!", L"Uh Oh", MB_OK);
+		return 1;
+	}
+	else {
+		displayWnd = CreateWindow(L"visscrclass", L"SCREENSAVER VIS", WS_VISIBLE | WS_CHILDWINDOW, 1, 1, 100, 20, parent, NULL, this_mod->hDllInstance, 0);
+		if (!displayWnd) {
+			MessageBox(this_mod->hwndParent, L"Could not create window, sorry but this is serious!", L"Uh Oh", MB_OK);
+			UnregisterClass(L"visscrclass", this_mod->hDllInstance);
+			return 1;
+		}
+	}
+
+	SetWindowLong(displayWnd, GWL_USERDATA, (LONG)this_mod);
+	SendMessage(this_mod->hwndParent, WM_WA_IPC, (WPARAM)displayWnd, IPC_SETVISWND);
+
 	ShowWindow(parent, SW_SHOWNORMAL);
 
 	return 0;
@@ -155,7 +194,7 @@ int render(struct winampVisModule* this_mod)
 	wchar_t cmdLine[1024];
 
 	GetPrivateProfileString(L"config", L"screensaver", L"", scrFile, MAX_PATH, configFileName);
-	wsprintf(cmdLine, L"\"%s\" /p %d", scrFile, myWindowState.me);
+	wsprintf(cmdLine, L"\"%s\" /p %d", scrFile, displayWnd);
 
 	// Run screensaver process
 	HANDLE procHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, currentPid);
@@ -197,9 +236,14 @@ void quit(struct winampVisModule* this_mod)
 	if (IsWindow(this_mod->hwndParent))
 		PostMessage(this_mod->hwndParent, WM_WA_IPC, 0, IPC_SETVISWND);
 
+	DestroyWindow(displayWnd);
+	displayWnd = NULL;
+
 	if (IsWindow(myWindowState.me))
 	{
 		DestroyWindow(myWindowState.me);
 		myWindowState.me = NULL;
 	}
+
+	UnregisterClass(L"visscrclass", this_mod->hDllInstance);
 }
