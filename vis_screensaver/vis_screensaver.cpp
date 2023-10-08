@@ -75,6 +75,7 @@ static const GUID embed_guid =
 { 10, 12, 16, { 255, 123, 1, 1, 66, 99, 69, 12 } };
 
 wchar_t configFileName[MAX_PATH];
+wchar_t savestateFileName[MAX_PATH];
 embedWindowState myWindowState = { 0 };
 HWND displayWnd = NULL;
 DWORD currentPid = -1;
@@ -137,6 +138,10 @@ int init(struct winampVisModule* this_mod)
 	char* pluginDir = (char*)SendMessage(this_mod->hwndParent, WM_WA_IPC, 0, IPC_GETPLUGINDIRECTORY);
 	wsprintf(configFileName, L"%S\\vis_screensaver.ini", pluginDir);
 
+	wchar_t tempPath[MAX_PATH];
+	GetTempPath(MAX_PATH, tempPath);
+	wsprintf(savestateFileName, L"%s\\vis_screensaver_state.ini", tempPath);
+
 	HWND(*embed)(embedWindowState * v);
 	*(void**)&embed = (void*)SendMessage(this_mod->hwndParent, WM_WA_IPC, (LPARAM)0, IPC_GET_EMBEDIF);
 	if (!embed)
@@ -148,10 +153,10 @@ int init(struct winampVisModule* this_mod)
 	// Move to correct position
 	RECT rWinamp = { 0 };
 	GetWindowRect(this_mod->hwndParent, &rWinamp);
-	myWindowState.r.left = GetPrivateProfileInt(L"window", L"WindowPosLeft", rWinamp.left, configFileName);
-	myWindowState.r.top = GetPrivateProfileInt(L"window", L"WindowPosLeft", rWinamp.bottom, configFileName);
-	myWindowState.r.right = GetPrivateProfileInt(L"window", L"WindowPosLeft", rWinamp.right, configFileName);
-	myWindowState.r.bottom = GetPrivateProfileInt(L"window", L"WindowPosLeft", rWinamp.bottom + 100, configFileName);
+	myWindowState.r.left = GetPrivateProfileInt(L"window", L"WindowPosLeft", rWinamp.left, savestateFileName);
+	myWindowState.r.top = GetPrivateProfileInt(L"window", L"WindowPosTop", rWinamp.bottom, savestateFileName);
+	myWindowState.r.right = GetPrivateProfileInt(L"window", L"WindowPosRight", rWinamp.right, savestateFileName);
+	myWindowState.r.bottom = GetPrivateProfileInt(L"window", L"WindowPosBottom", rWinamp.bottom + 100, savestateFileName);
 
 	// this sets a GUID which can be used in a modern skin / other parts of Winamp to
 	// indentify the embedded window frame such as allowing it to activated in a skin
@@ -223,14 +228,11 @@ void quit(struct winampVisModule* this_mod)
 	// Kill screensaver process
 	stopProcess();
 
-	char* pluginDir = (char*)SendMessage(this_mod->hwndParent, WM_WA_IPC, 0, IPC_GETPLUGINDIRECTORY);
-	wsprintf(configFileName, L"%S\\vis_screensaver.ini", pluginDir);
-
 	// Save window position
-	WritePrivateProfileString(L"window", L"WindowPosLeft", std::to_wstring(myWindowState.r.left).c_str(), configFileName);
-	WritePrivateProfileString(L"window", L"WindowPosRight", std::to_wstring(myWindowState.r.right).c_str(), configFileName);
-	WritePrivateProfileString(L"window", L"WindowPosTop", std::to_wstring(myWindowState.r.top).c_str(), configFileName);
-	WritePrivateProfileString(L"window", L"WindowPosBottom", std::to_wstring(myWindowState.r.bottom).c_str(), configFileName);
+	WritePrivateProfileString(L"window", L"WindowPosLeft", std::to_wstring(myWindowState.r.left).c_str(), savestateFileName);
+	WritePrivateProfileString(L"window", L"WindowPosRight", std::to_wstring(myWindowState.r.right).c_str(), savestateFileName);
+	WritePrivateProfileString(L"window", L"WindowPosTop", std::to_wstring(myWindowState.r.top).c_str(), savestateFileName);
+	WritePrivateProfileString(L"window", L"WindowPosBottom", std::to_wstring(myWindowState.r.bottom).c_str(), savestateFileName);
 
 	// remove vis window, NOTE: THIS IS BAD AND NOT NEEDED EVIDENTLY
 	if (IsWindow(this_mod->hwndParent))
