@@ -4,6 +4,8 @@
 #include <Shlwapi.h>
 
 #include <string>
+#include <vector>
+#include <map>
 
 #include "Winamp/wa_ipc.h"
 #include "vis.h"
@@ -19,36 +21,32 @@ int init(struct winampVisModule* this_mod);
 int render(struct winampVisModule* this_mod);
 void quit(struct winampVisModule* this_mod);
 
+///////////////
+// VARIABLES //
+///////////////
+
+HINSTANCE myself = NULL;
+wchar_t configFileName[MAX_PATH];
+wchar_t savestateFileName[MAX_PATH];
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD  ul_reason_for_call, LPVOID lpReserved)
+{
+	myself = (HINSTANCE)hModule;
+	return TRUE;
+}
+
 ////////////////////////
 // PLUGIN DESCRIPTORS //
 ////////////////////////
 
-winampVisModule visDescriptor = {
-	const_cast<char*>("SCREENSAVER VIS"),	// description: description of module
-	NULL,	// hwndParent: parent window (filled in by calling app)
-	NULL,	// hDllInstance: instance handle to this DLL (filled in by calling app)
-	0,		// sRate: sample rate (filled in by calling app)
-	0,		// nCh: number of channels (filled in...)
-	10,		// latencyMS: latency from call of RenderFrame to actual drawing (calling app looks at this value when getting data)
-	15,		// delayMS: delay between calls in ms
-	0,		// spectrumNch
-	2,		// waveformNch
-	{ 0 },	// spectrumData[2][576]
-	{ 0 },	// waveformData[2][576]
-	showConfigDialog,	// configuration dialog
-	init,				// 0 on success, creates window, etc
-	render,				// returns 0 if successful, 1 if vis should end
-	quit,				// call when done
-	NULL	// userData: user data, optional
-};
+std::vector<winampVisModule> visDescriptors;
 
 winampVisModule* getModule(int which)
 {
-	switch (which)
-	{
-	case 0:	return &visDescriptor;
-	default: return NULL;
-	}
+	if (which < visDescriptors.size())
+		return &visDescriptors[which];
+	else
+		return NULL;
 }
 
 winampVisHeader visHeader = {
@@ -59,6 +57,63 @@ winampVisHeader visHeader = {
 
 extern "C" __declspec(dllexport) winampVisHeader * winampVisGetHeader()
 {
+	wchar_t pluginDir[MAX_PATH];
+	GetModuleFileName(myself, pluginDir, MAX_PATH);
+	*wcsrchr(pluginDir, '\\') = '\0';
+	wsprintf(configFileName, L"%s\\vis_screensaver.ini", pluginDir);
+
+	wchar_t tempPath[MAX_PATH];
+	GetTempPath(MAX_PATH, tempPath);
+	wsprintf(savestateFileName, L"%s\\vis_screensaver_state.ini", tempPath);
+
+	wchar_t scrPath[MAX_PATH];
+	GetPrivateProfileString(L"config", L"scrdir", L"c:\\Windows\\System32\\", scrPath, MAX_PATH, configFileName);
+
+	if (visDescriptors.size() == 0)
+	{
+		wchar_t searchCriteria[1024];
+		WIN32_FIND_DATA FindFileData;
+		HANDLE searchHandle = INVALID_HANDLE_VALUE;
+
+		wsprintf(searchCriteria, L"%s*.scr", scrPath);
+		searchHandle = FindFirstFile(searchCriteria, &FindFileData);
+		if (searchHandle != INVALID_HANDLE_VALUE)
+		{
+			do
+			{
+				size_t retVal;
+				char desc[MAX_PATH];
+				wcstombs_s(&retVal, desc, FindFileData.cFileName, MAX_PATH);
+				char* descDup = _strdup(desc);
+
+				wchar_t fileName[MAX_PATH];
+				wsprintf(fileName, L"%s%s", scrPath, FindFileData.cFileName);
+				wchar_t* fileNameDup = _wcsdup(fileName);
+
+				winampVisModule visDescriptor = {
+					descDup,// description: description of module
+					NULL,	// hwndParent: parent window (filled in by calling app)
+					NULL,	// hDllInstance: instance handle to this DLL (filled in by calling app)
+					0,		// sRate: sample rate (filled in by calling app)
+					0,		// nCh: number of channels (filled in...)
+					10,		// latencyMS: latency from call of RenderFrame to actual drawing (calling app looks at this value when getting data)
+					15,		// delayMS: delay between calls in ms
+					0,		// spectrumNch
+					2,		// waveformNch
+					{ 0 },	// spectrumData[2][576]
+					{ 0 },	// waveformData[2][576]
+					showConfigDialog,	// configuration dialog
+					init,				// 0 on success, creates window, etc
+					render,				// returns 0 if successful, 1 if vis should end
+					quit,				// call when done
+					fileNameDup			// userData: user data, optional (in our case, the full file name)
+				};
+				visDescriptors.push_back(visDescriptor);
+			} while (FindNextFile(searchHandle, &FindFileData));
+			FindClose(searchHandle);
+		}
+	}
+
 	return &visHeader;
 }
 
@@ -74,8 +129,6 @@ extern "C" __declspec(dllexport) winampVisHeader * winampVisGetHeader()
 static const GUID embed_guid =
 { 10, 12, 16, { 255, 123, 1, 1, 66, 99, 69, 12 } };
 
-wchar_t configFileName[MAX_PATH];
-wchar_t savestateFileName[MAX_PATH];
 embedWindowState myWindowState = { 0 };
 HWND displayWnd = NULL;
 DWORD currentPid = -1;
@@ -135,13 +188,6 @@ void showConfigDialog(struct winampVisModule* this_mod)
 // 0 on success, creates window, etc
 int init(struct winampVisModule* this_mod)
 {
-	char* pluginDir = (char*)SendMessage(this_mod->hwndParent, WM_WA_IPC, 0, IPC_GETPLUGINDIRECTORY);
-	wsprintf(configFileName, L"%S\\vis_screensaver.ini", pluginDir);
-
-	wchar_t tempPath[MAX_PATH];
-	GetTempPath(MAX_PATH, tempPath);
-	wsprintf(savestateFileName, L"%s\\vis_screensaver_state.ini", tempPath);
-
 	HWND(*embed)(embedWindowState * v);
 	*(void**)&embed = (void*)SendMessage(this_mod->hwndParent, WM_WA_IPC, (LPARAM)0, IPC_GET_EMBEDIF);
 	if (!embed)
@@ -195,11 +241,9 @@ int init(struct winampVisModule* this_mod)
 // returns 0 if successful, 1 if vis should end
 int render(struct winampVisModule* this_mod)
 {
-	wchar_t scrFile[MAX_PATH];
 	wchar_t cmdLine[1024];
-
-	GetPrivateProfileString(L"config", L"screensaver", L"", scrFile, MAX_PATH, configFileName);
-	wsprintf(cmdLine, L"\"%s\" /p %d", scrFile, displayWnd);
+	struct winampVisModule* currentMod = (struct winampVisModule*)GetWindowLong(displayWnd, GWL_USERDATA);
+	wsprintf(cmdLine, L"\"%s\" /p %d", (wchar_t *)currentMod->userData, displayWnd);
 
 	// Run screensaver process
 	HANDLE procHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, currentPid);
